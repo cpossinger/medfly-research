@@ -14,6 +14,12 @@ library(gghighlight)
 library(future.apply)
 library(future)
 library(reshape2)
+library(sjPlot)
+library(scales)
+
+# pacman::p_load(plyr, dplyr, tidyr, purrr, stringr, fdapace, frechet, furrr, readr, ggplot2, magrittr, ggpubr, gghighlight, future.apply, future, reshape2, sjPlot)
+
+
 
 lifetable_2_df <- function(file, new_file_name) {
   lifetable <- read.table(file)
@@ -184,7 +190,15 @@ medfly_preprocess <- function() {
 }
 
 
-frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name) {
+frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name, x_axis_name = "Remaining Lifespan", y_limits) {
+  if ((t %>% unique()) != 20) {
+    x_axis_name <- ""
+  }
+
+  if ((t %>% unique()) != 10) {
+    y_axis_name <- ""
+  }
+
   cage_lst <- df %>% group_split()
 
   xin <- pred %>%
@@ -210,9 +224,22 @@ frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name) 
   )$dout %>%
     set_names(df$cage %>% unique())
 
+  print(dout)
+
   if (y_axis == "lhf") {
     lh_lst <- dout %>%
       map(~ list(lhf = log(.x$y / surv_func(.x$x, .x$y))))
+
+    dout <- map2(
+      dout,
+      lh_lst,
+      ~ .x %>% append(.y)
+    )
+  }
+
+  if (y_axis == "lhm") {
+    lh_lst <- dout %>%
+      map(~ list(lhm = log(.x$y / surv_func(.x$x, .x$y))))
 
     dout <- map2(
       dout,
@@ -244,15 +271,19 @@ frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name) 
       )
     ) +
       geom_line() +
-      scale_color_continuous(
+      scale_color_gradient(
         name = pred_name,
-        type = "viridis"
+        low = "blue",
+        high = "red"
       ) +
-      xlab("Remaining Lifespan") +
+      xlab(x_axis_name) +
       ylab(y_axis_name) +
       xlim(0, 25) +
       theme_minimal() +
-      theme(legend.key.width = unit(1, "cm"))
+      theme(text = element_text(size = 9)) +
+      scale_y_continuous(
+        limits = y_limits
+      )
   })
 }
 
@@ -287,7 +318,7 @@ surv_func <- function(x, y) {
 }
 
 
-save_plot_ci <- function(rst, rawbetas, varSelectedNames, filename) {
+save_ci_plot <- function(rst, rawbetas, varSelectedNames, filename, y_limits) {
   rst <- matrix(unlist(rst), nrow = length(as.matrix(rawbetas)))
   bound_beta <- apply(rst, 1, quantile, c(0.025, 0.975)) # calculate quantiles
   lower_beta <- matrix(bound_beta[1, ], ncol = ncol(rawbetas))
@@ -320,11 +351,7 @@ save_plot_ci <- function(rst, rawbetas, varSelectedNames, filename) {
   smoothupper <- smoothupper[, -2]
   smoothlower <- smoothlower[, -2]
 
-
-
   names(smoothbetas) <- c("Age", varSelectedNames)
-
-
   df <- data.frame(
     smoothbetas %>% melt(
       id.vars = "Age",
@@ -333,20 +360,28 @@ save_plot_ci <- function(rst, rawbetas, varSelectedNames, filename) {
     ),
     lower = as.vector(smoothlower[, 2:ncol(smoothlower)]),
     upper = as.vector(smoothupper[, 2:ncol(smoothupper)])
-  )
+  ) %>%
+    mutate(
+      highlight = (lower >= 0 | upper <= 0)
+    )
 
   beta_ci <- ggplot() +
-    geom_line(data = df, aes(x = Age, y = Beta), colour = "red", size = 0.6) +
-    gghighlight((lower >= 0 | upper <= 0), unhighlighted_params = aes(colour = "black", size = 0.4)) +
+    geom_line(data = df, aes(x = Age, y = Beta, color = highlight, group = 1), size = 0.6) +
+    scale_color_manual(values = c("black", "red")) +
+    scale_y_continuous(limits = y_limits) +
     geom_ribbon(data = df, aes(x = Age, ymin = lower, ymax = upper), fill = "grey12", alpha = 0.2) +
     facet_wrap(~predictor, scales = "free_y") +
     geom_hline(data = subset(df, predictor %in% unique(df$predictor)[-6]), aes(yintercept = 0), colour = "blue", linetype = 2) +
-    theme_minimal(base_size = 25)
+    theme_minimal(base_size = 25) +
+    theme(legend.position = "none") +
+    xlim(8, 45)
 
   facet_dim <- df$predictor %>%
     unique() %>%
     length() %>%
     wrap_dims()
+
+
   ggsave(
     filename = paste0(filename, ".pdf"),
     plot = beta_ci, path = "plots",
@@ -355,26 +390,25 @@ save_plot_ci <- function(rst, rawbetas, varSelectedNames, filename) {
   )
 }
 
-bootstrap_ci_plot <- function(df, resp, varSelected, varSelectedNames, filename) {
-  df %<>% filter(age <= 50)
-  rawbetas <- create_rawbetas(df, resp, varSelected)
+bootstrap_ci_plot <- function(df, resp, varSelected, varSelectedNames, filename, y_limits) {
+  rawbetas <- rawbetas(df, resp, varSelected)
   rst <- readRDS(paste0("rst/", filename, ".rds"))
-  save_plot_ci(rst, rawbetas, varSelectedNames, filename)
+  save_ci_plot(rst, rawbetas, varSelectedNames, filename, y_limits)
 }
 
-bootstrap <- function(df, resp, varSelected, filename) {
-  B <- 10000 # number of bootstrap
+bootstrap <- function(df, resp, varSelected, filename, B) {
+  print("Bootstrap Starting")
   cage <- unique(df$cage) # unique states
-  df %<>% filter(age <= 50)
+
 
   # bootstrap using parallel computing
-  rst <- future_lapply(1:B, future.seed = TRUE, function(i) {
+  rst <- map(.x = 1:B, .progress = TRUE, .f = function(i) {
     index <- sample(length(cage), replace = TRUE)
     df_boot <- NULL
     for (j in cage[index]) {
       df_boot <- rbind(df_boot, df[df$cage == j, ])
     }
-    beta_est(df_boot, resp, varSelected)
+    beta_est(df_boot, resp, varSelected, i)
   })
 
   dir <- paste0(getwd(), "/rst")
@@ -383,20 +417,21 @@ bootstrap <- function(df, resp, varSelected, filename) {
   saveRDS(rst, file = paste0("rst/", filename, ".rds"))
 }
 
-beta_est <- function(df, resp, varSelected) {
+
+beta_est <- function(df, resp, varSelected, i) {
   df %>%
-    select(c("cage", "age", resp, varSelected)) %>%
+    select("cage", "age", resp, varSelected) %>%
     ddply(.(age), function(d) {
       resp <- names(d)[3]
       varSelected <- names(d)[4:ncol(d)]
-      d_std <- d %>% select(c(resp, varSelected))
+      d_std <- d %>% select(resp, varSelected)
       d_std[varSelected] <- d_std[varSelected] %>%
         apply(2, function(x) (x - mean(x)) / sd(x))
       Xmean <- d %>%
-        select(all_of(varSelected)) %>%
+        select(varSelected) %>%
         colMeans()
       Xsd <- d %>%
-        select(all_of(varSelected)) %>%
+        select(varSelected) %>%
         apply(2, sd)
       lmfit <- lm(
         as.formula(paste(resp, "~", paste(varSelected, collapse = " + "))),
@@ -410,27 +445,27 @@ beta_est <- function(df, resp, varSelected) {
     as.data.frame()
 }
 
-create_rawbetas <- function(df, resp, varSelected) {
+rawbetas <- function(df, resp, varSelected) {
   df %>%
-    select(c("cage", "age", resp, varSelected)) %>%
+    select("cage", "age", resp, varSelected) %>%
     ddply(.(age), function(d) {
       resp <- names(d)[3]
       varSelected <- names(d)[4:ncol(d)]
-      d_std <- d %>% select(c(resp, varSelected))
+      d_std <- d %>% select(resp, varSelected)
       d_std[varSelected] <- d_std[varSelected] %>%
         apply(2, function(x) (x - mean(x)) / sd(x))
       Xmean <- d %>%
-        select(all_of(varSelected)) %>%
+        select(varSelected) %>%
         colMeans()
       Xsd <- d %>%
-        select(all_of(varSelected)) %>%
+        select(varSelected) %>%
         apply(2, sd)
-
+      #
       lmfit <- lm(
         as.formula(paste(resp, "~", paste(varSelected, collapse = " + "))),
         data = d_std
       )
-
+      #
       res <- coef <- lmfit$coefficients
       res[1] <- coef[1] - sum(coef[-1] * Xmean / Xsd)
       res[2:length(coef)] <- coef[-1] / Xsd
@@ -439,6 +474,156 @@ create_rawbetas <- function(df, resp, varSelected) {
     as.data.frame()
 }
 
+
+qf2pdf <- function(qf = NULL, prob = NULL, breaks = NULL, optns = list()) {
+  hist <- qf2hist(qf = qf, prob = prob, breaks = breaks)
+  return(CreateDensity(histogram = hist, optns = optns))
+}
+
+qf2hist <- function(qf = NULL, prob = NULL, breaks = NULL) { # , tol=1e-2){
+  if (is.null(qf)) {
+    stop("qf is missing.")
+  }
+  if (!is.vector(qf)) {
+    stop("qf should be a vector.")
+  }
+  if (!is.numeric(qf)) {
+    stop("qf should be a numerical vector.")
+  }
+  if (is.unsorted(qf)) {
+    stop("qf should be an increasingly sorted numerical vector.")
+  }
+  if (is.null(prob)) {
+    prob <- seq(0, 1, length.out = length(qf))
+  }
+  if (length(prob) != length(qf)) {
+    stop("The length of prob should be the same as qf.")
+  }
+  if (!is.vector(prob) | !is.numeric(prob) | is.unsorted(prob)) {
+    stop("prob should be an increasingly sorted numerical vector.")
+  }
+
+  # if(min(prob)>tol | max(prob) < 1-tol)
+  #  stop("prob should be a vector with minimum 0 and maximum 1.")
+  if (is.null(breaks)) {
+    breaks <- seq(min(qf), max(qf), length.out = 1e3)
+  }
+  if (!is.vector(breaks) | !is.numeric(breaks) | is.unsorted(breaks)) {
+    stop("breaks should be an increasingly sorted numerical vector.")
+  }
+  if (min(breaks) > min(qf) | max(breaks) < max(qf)) {
+    stop("The range of breaks should cover that of qf.")
+  }
+
+  cdf <- approx(x = qf, y = prob, xout = breaks, ties = mean)$y
+  if (min(qf) > min(breaks)) cdf[breaks < min(qf)] <- 0
+  if (max(breaks) > max(qf)) cdf[breaks > max(qf)] <- 1
+  if (sum(cdf > 1)) cdf[cdf > 1] <- 1
+  density <- (cdf[-1] - cdf[-length(cdf)])
+  counts <- as.integer(density * 1e5)
+  density <- density / (breaks[-1] - breaks[-length(breaks)])
+  mids <- (breaks[-1] + breaks[-length(breaks)]) / 2
+  hist <- list(breaks = breaks, counts = counts, density = density, mids = mids)
+  return(hist)
+}
+
+
+GloWassReg <- function(xin, qin, xout, optns = list()) {
+  if (is.null(optns$Rsquared)) optns$Rsquared <- FALSE
+
+  if (is.vector(xin)) {
+    xin <- as.matrix(xin)
+  }
+  if (is.vector(xout)) {
+    xout <- as.matrix(xout)
+  }
+  if (nrow(xin) != nrow(qin)) {
+    stop("xin and qin should have the same number of rows.")
+  }
+  if (ncol(xin) != ncol(xout)) {
+    stop("xin and xout should have the same number of columns.")
+  }
+  if (optns$Rsquared & is.null(optns$qSup)) {
+    warning("optns$qSup is missing and taking the default value.")
+  }
+
+  k <- nrow(xout)
+  n <- nrow(xin)
+  m <- ncol(qin)
+  xbar <- colMeans(xin)
+  Sigma <- cov(xin) * (n - 1) / n
+  invSigma <- solve(Sigma)
+
+  # if lower & upper are neither NULL
+  A <- cbind(diag(m), rep(0, m)) + cbind(rep(0, m), -diag(m))
+  if (!is.null(optns$upper) & !is.null(optns$lower)) {
+    b0 <- c(optns$lower, rep(0, m - 1), -optns$upper)
+  } else if (!is.null(optns$upper)) {
+    A <- A[, -1]
+    b0 <- c(rep(0, m - 1), -optns$upper)
+  } else if (!is.null(optns$lower)) {
+    A <- A[, -ncol(A)]
+    b0 <- c(optns$lower, rep(0, m - 1))
+  } else {
+    A <- A[, -c(1, ncol(A))]
+    b0 <- rep(0, m - 1)
+  }
+  Pmat <- as(diag(m), "sparseMatrix")
+  Amat <- as(t(A), "sparseMatrix")
+
+  qout <- sapply(1:k, function(j) {
+    s <- 1 + t(t(xin) - xbar) %*% invSigma %*% (xout[j, ] - xbar)
+    s <- as.vector(s)
+    gx <- colMeans(qin * s)
+
+    # res <- do.call(quadprog::solve.QP, list(diag(m), gx, A, b0))
+    # return(sort(res$solution)) #return(res$solution)
+
+
+    res <- do.call(
+      osqp::solve_osqp,
+      list(P = Pmat, q = -gx, A = Amat, l = b0, pars = osqp::osqpSettings(verbose = FALSE))
+    )
+    return(sort(res$x))
+  })
+  qout <- t(qout)
+
+  if (!optns$Rsquared) {
+    return(list(qout = qout))
+  } else {
+    qMean <- colMeans(qin)
+    if (k == n) {
+      if (sum(abs(xout - xin)) > 1e-10 * length(xout)) {
+        qin.est <- qout
+      }
+      qin.est <- qout
+    } else {
+      qin.est <- sapply(1:n, function(j) {
+        s <- 1 + t(t(xin) - xbar) %*% invSigma %*% (xin[j, ] - xbar)
+        s <- as.vector(s)
+        gx <- colMeans(qin * s)
+
+        # res <- do.call(quadprog::solve.QP, list(diag(m), gx, A, b0))
+        # return(sort(res$solution)) #return(res$solution)
+
+        res <- do.call(
+          osqp::solve_osqp,
+          list(P = Pmat, q = -gx, A = Amat, l = b0, pars = osqp::osqpSettings(verbose = FALSE))
+        )
+        return(sort(res$x))
+      })
+      qin.est <- t(qin.est)
+    }
+    Rsq <- ifelse(
+      is.null(optns$qSup),
+      1 - sum(t(qin - qin.est)^2) / sum((t(qin) - qMean)^2),
+      1 - pracma::trapz(x = optns$qSup, y = colSums((qin - qin.est)^2)) /
+        pracma::trapz(x = optns$qSup, y = rowSums((t(qin) - qMean)^2))
+    )
+    if (Rsq < 0) Rsq <- 0
+    return(list(qout = qout, R.squared = Rsq))
+  }
+}
 
 GloDenReg <- function(xin = NULL, yin = NULL, hin = NULL, qin = NULL, xout = NULL, optns = list()) {
   if (is.null(optns$Rsquared)) optns$Rsquared <- FALSE
@@ -615,154 +800,4 @@ GloDenReg <- function(xin = NULL, yin = NULL, hin = NULL, qin = NULL, xout = NUL
   if (optns$Rsquared & sum(abs(xin - 1)) > 0) res$Rsq <- regRes$R.squared
   class(res) <- "denReg"
   return(res)
-}
-
-
-GloWassReg <- function(xin, qin, xout, optns = list()) {
-  if (is.null(optns$Rsquared)) optns$Rsquared <- FALSE
-
-  if (is.vector(xin)) {
-    xin <- as.matrix(xin)
-  }
-  if (is.vector(xout)) {
-    xout <- as.matrix(xout)
-  }
-  if (nrow(xin) != nrow(qin)) {
-    stop("xin and qin should have the same number of rows.")
-  }
-  if (ncol(xin) != ncol(xout)) {
-    stop("xin and xout should have the same number of columns.")
-  }
-  if (optns$Rsquared & is.null(optns$qSup)) {
-    warning("optns$qSup is missing and taking the default value.")
-  }
-
-  k <- nrow(xout)
-  n <- nrow(xin)
-  m <- ncol(qin)
-  xbar <- colMeans(xin)
-  Sigma <- cov(xin) * (n - 1) / n
-  invSigma <- solve(Sigma)
-
-  # if lower & upper are neither NULL
-  A <- cbind(diag(m), rep(0, m)) + cbind(rep(0, m), -diag(m))
-  if (!is.null(optns$upper) & !is.null(optns$lower)) {
-    b0 <- c(optns$lower, rep(0, m - 1), -optns$upper)
-  } else if (!is.null(optns$upper)) {
-    A <- A[, -1]
-    b0 <- c(rep(0, m - 1), -optns$upper)
-  } else if (!is.null(optns$lower)) {
-    A <- A[, -ncol(A)]
-    b0 <- c(optns$lower, rep(0, m - 1))
-  } else {
-    A <- A[, -c(1, ncol(A))]
-    b0 <- rep(0, m - 1)
-  }
-  Pmat <- as(diag(m), "sparseMatrix")
-  Amat <- as(t(A), "sparseMatrix")
-
-  qout <- sapply(1:k, function(j) {
-    s <- 1 + t(t(xin) - xbar) %*% invSigma %*% (xout[j, ] - xbar)
-    s <- as.vector(s)
-    gx <- colMeans(qin * s)
-
-    # res <- do.call(quadprog::solve.QP, list(diag(m), gx, A, b0))
-    # return(sort(res$solution)) #return(res$solution)
-
-
-    res <- do.call(
-      osqp::solve_osqp,
-      list(P = Pmat, q = -gx, A = Amat, l = b0, pars = osqp::osqpSettings(verbose = FALSE))
-    )
-    return(sort(res$x))
-  })
-  qout <- t(qout)
-
-  if (!optns$Rsquared) {
-    return(list(qout = qout))
-  } else {
-    qMean <- colMeans(qin)
-    if (k == n) {
-      if (sum(abs(xout - xin)) > 1e-10 * length(xout)) {
-        qin.est <- qout
-      }
-    } else {
-      qin.est <- sapply(1:n, function(j) {
-        s <- 1 + t(t(xin) - xbar) %*% invSigma %*% (xin[j, ] - xbar)
-        s <- as.vector(s)
-        gx <- colMeans(qin * s)
-
-        # res <- do.call(quadprog::solve.QP, list(diag(m), gx, A, b0))
-        # return(sort(res$solution)) #return(res$solution)
-
-        res <- do.call(
-          osqp::solve_osqp,
-          list(P = Pmat, q = -gx, A = Amat, l = b0, pars = osqp::osqpSettings(verbose = FALSE))
-        )
-        return(sort(res$x))
-      })
-      qin.est <- t(qin.est)
-    }
-    Rsq <- ifelse(
-      is.null(optns$qSup),
-      1 - sum(t(qin - qin.est)^2) / sum((t(qin) - qMean)^2),
-      1 - pracma::trapz(x = optns$qSup, y = colSums((qin - qin.est)^2)) /
-        pracma::trapz(x = optns$qSup, y = rowSums((t(qin) - qMean)^2))
-    )
-    if (Rsq < 0) Rsq <- 0
-    return(list(qout = qout, R.squared = Rsq))
-  }
-}
-
-
-qf2pdf <- function(qf = NULL, prob = NULL, breaks = NULL, optns = list()) {
-  hist <- qf2hist(qf = qf, prob = prob, breaks = breaks)
-  return(CreateDensity(histogram = hist, optns = optns))
-}
-
-qf2hist <- function(qf = NULL, prob = NULL, breaks = NULL) { # , tol=1e-2){
-  if (is.null(qf)) {
-    stop("qf is missing.")
-  }
-  if (!is.vector(qf)) {
-    stop("qf should be a vector.")
-  }
-  if (!is.numeric(qf)) {
-    stop("qf should be a numerical vector.")
-  }
-  if (is.unsorted(qf)) {
-    stop("qf should be an increasingly sorted numerical vector.")
-  }
-  if (is.null(prob)) {
-    prob <- seq(0, 1, length.out = length(qf))
-  }
-  if (length(prob) != length(qf)) {
-    stop("The length of prob should be the same as qf.")
-  }
-  if (!is.vector(prob) | !is.numeric(prob) | is.unsorted(prob)) {
-    stop("prob should be an increasingly sorted numerical vector.")
-  }
-
-  # if(min(prob)>tol | max(prob) < 1-tol)
-  #  stop("prob should be a vector with minimum 0 and maximum 1.")
-  if (is.null(breaks)) {
-    breaks <- seq(min(qf), max(qf), length.out = 1e3)
-  }
-  if (!is.vector(breaks) | !is.numeric(breaks) | is.unsorted(breaks)) {
-    stop("breaks should be an increasingly sorted numerical vector.")
-  }
-  if (min(breaks) > min(qf) | max(breaks) < max(qf)) {
-    stop("The range of breaks should cover that of qf.")
-  }
-
-  cdf <- approx(x = qf, y = prob, xout = breaks, ties = mean)$y
-  if (min(qf) > min(breaks)) cdf[breaks < min(qf)] <- 0
-  if (max(breaks) > max(qf)) cdf[breaks > max(qf)] <- 1
-  if (sum(cdf > 1)) cdf[cdf > 1] <- 1
-  density <- (cdf[-1] - cdf[-length(cdf)])
-  counts <- as.integer(density * 1e5)
-  density <- density / (breaks[-1] - breaks[-length(breaks)])
-  mids <- (breaks[-1] + breaks[-length(breaks)]) / 2
-  hist <- list(breaks = breaks, counts = counts, density = density, mids = mids)
-  return(hist)
 }
