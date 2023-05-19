@@ -191,10 +191,6 @@ medfly_preprocess <- function() {
 
 
 frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name, x_axis_name = "Remaining Lifespan", y_limits) {
-  if ((t %>% unique()) != 20) {
-    x_axis_name <- ""
-  }
-
   if ((t %>% unique()) != 10) {
     y_axis_name <- ""
   }
