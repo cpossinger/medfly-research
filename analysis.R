@@ -537,7 +537,7 @@ ggplot(plot_df,aes(x = x, y = y)) +
   xlab(x_axis_name)+
   ylab(y_axis_name)+
   theme_minimal() +
-  theme(text = element_text(size = 9)) +
+  theme(text = element_text(size = 10)) +
   ggtitle(title) +
   theme(plot.title = element_text(hjust = 0.5))+
   scale_y_continuous(
@@ -549,11 +549,11 @@ ggplot(plot_df,aes(x = x, y = y)) +
 
 #### Figure 7 ####
 fig_7 <- append(
-  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nf", "sm_sa", "SM-SA", "lhf",str_wrap("Female Log Hazard",10), "Remaining Lifespan", c(-3,-1))),
-  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nf", "sm_sa", "SM-SA", "y", str_wrap("Female Remaining Lifespan Distribution",10), "Remaining Lifespan", c(0,0.12)))
+  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nf", "sm_sa", "SM-SA", "lhf",str_wrap("Female Log Hazard",21), "Remaining Lifespan", c(-3,-1))),
+  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nf", "sm_sa", "SM-SA", "y", str_wrap("Female Remaining Lifespan Distribution",21), "Remaining Lifespan", c(0,0.12)))
 ) %>% flatten()
 
-fig_7 <- c(c(10,20,30) %>% map2(list("t = 10 days, FVE = 0.14",  "t = 20 days, FVE = 0.09","t = 30 days, FVE = 0.21"),~nonparam_plot(fly_df,rep(.x, 87),"nf","sm_sa",str_wrap("Female Mean Remaining Lifespan",10),"SM-SA",.y,c(5,10))),fig_7)
+fig_7 <- c(c(10,20,30) %>% map2(list("t = 10 days",  "t = 20 days","t = 30 days"),~nonparam_plot(fly_df,rep(.x, 87),"nf","sm_sa",str_wrap("Female Mean Remaining Lifespan",18),"SM-SA",.y,c(5,10))),fig_7)
 
 ggarrange(
   plotlist = fig_7,
@@ -561,8 +561,8 @@ ggarrange(
   legend = "right"
 ) %>% ggsave(filename ="frechetFemale2Male.pdf",
 path = "plots",
-width = 183, 
-height = 103, 
+width = 254, 
+height = 143, 
 dpi = 600,
 units = "mm"
 )
@@ -645,14 +645,13 @@ ggarrange(
 
 #### Figure 11 ####
 fig_11 <- append(
-  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nm", "sf_sa", "SF-SA", "lhm",str_wrap("Male Log Hazard",10), "Remaining Lifespan", c(-3,-0.5))),
-  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nm", "sf_sa", "SF-SA", "y", str_wrap("Male Remaining Lifespan Distribution",10), "Remaining Lifespan", c(0,0.15)))
+  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nm", "sf_sa", "SF-SA", "lhm",str_wrap("Male Log Hazard",21), "Remaining Lifespan", c(-3,-0.5))),
+  c(10,20,30) %>% map(~ frechet_plot(fly_df, rep(.x, 87), "nm", "sf_sa", "SF-SA", "y", str_wrap("Male Remaining Lifespan Distribution",21), "Remaining Lifespan", c(0,0.15)))
 ) %>% flatten()
 
 
 
-fig_11 <- c(c(10,20,30) %>% map2(list("t = 10 days, FVE = 0.17",  "t = 20 days, FVE = 0.41","t = 30 days, FVE = 0.22"),~nonparam_plot(fly_df,rep(.x, 87),"nm","sf_sa",str_wrap("Male Mean Remaining Lifespan",10),"SF-SA",.y,c(4,12))),fig_11)
-
+fig_11 <- c(c(10,20,30) %>% map2(list("t = 10 days","t = 20 days","t = 30 days"),~nonparam_plot(fly_df,rep(.x, 87),"nm","sf_sa",str_wrap("Male Mean Remaining Lifespan",18),"SF-SA",.y,c(4,12))),fig_11)
 
 # t = 28     FVE = 0.39
 
@@ -662,8 +661,8 @@ ggarrange(
   legend = "right"
 ) %>% ggsave(filename ="frechetMale2Female.pdf",
 path = "plots", 
-width = 183, 
-height = 103, 
+width = 254, 
+height = 143, 
 dpi = 600,
 units = "mm")
  

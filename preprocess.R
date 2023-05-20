@@ -276,7 +276,7 @@ frechet_plot <- function(df, t, response, pred, pred_name, y_axis, y_axis_name, 
       ylab(y_axis_name) +
       xlim(0, 25) +
       theme_minimal() +
-      theme(text = element_text(size = 9)) +
+      theme(text = element_text(size = 10)) +
       scale_y_continuous(
         limits = y_limits
       )
