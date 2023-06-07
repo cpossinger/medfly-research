@@ -12,7 +12,6 @@ fly_df %>%
   filter(lhfm == min(lhfm) | lhfm == max(lhfm))
 
 
-
 ggarrange(
 
           plotlist = list(
@@ -809,3 +808,48 @@ c(10, 15, 20, 25, 30) %>% map(~ frechet_fve(fly_df, rep(.x, 87), "na", "sa"))
 c(10, 15, 20, 25, 30,28) %>% map(~ frechet_fve(fly_df, rep(.x, 87), "nm", "sf_sa"))
 c(20,30) %>% map(~ frechet_fve(fly_df, rep(.x, 87), "nm", "sf_sa"))
 c(10) %>% map(~ frechet_fve(fly_df, rep(.x, 87), "nm", "sf_sa"))
+
+
+#### Cross-over modeling ####
+source("preprocess.R")
+fly_df <- medfly_preprocess()
+
+
+# Find Cross Over t
+cross_over_age  <-  fly_df |>
+  group_split() |> map_dbl(~ .x |>
+    filter(age >= 20, lhm > lhf) |>
+    extract2("age") |>
+    extract(1))
+
+sex_ratio  <- fly_df |>
+  group_split() |>
+  map2_dbl(cross_over_age, ~ .x |>
+    filter(age == .y) |>
+    mutate(sex_ratio = sm / sf) |>
+    pull(sex_ratio))
+
+avg_sex_ratio  <- fly_df |>
+  group_split() |>
+  map2_dbl(cross_over_age, ~ .x |>
+    filter(age > .y) |>
+    mutate(sex_ratio = sm / sf) |>
+    pull(sex_ratio) |>
+      mean()
+  )
+
+plot_data <- tibble(cross_over_age = cross_over_age,
+                    sex_ratio = sex_ratio,
+                    avg_sex_ratio = avg_sex_ratio)
+
+ggplot(plot_data, aes(x = cross_over_age, y = avg_sex_ratio)) +
+geom_point() +
+geom_smooth(method = "lm")
+
+ggplot(plot_data, aes(x = cross_over_age, y = sex_ratio)) +
+geom_point() +
+geom_smooth(method = "lm")
+
+
+sex_ratio_model  <- lm(cross_over_age ~ sex_ratio)
+avg_sex_ratio_model  <-   lm(cross_over_age ~ avg_sex_ratio) |> summary()
